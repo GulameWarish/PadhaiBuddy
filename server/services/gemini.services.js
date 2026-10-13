@@ -1,55 +1,104 @@
+const Gemini_URL =
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent";
 
-const Gemini_URL = 
-"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent"
+const sleep = (ms) =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
 export const generateGeminiResponse = async (prompt) => {
+  const maxRetries = 3;
+  const apiKey = process.env.GEMINI_API_KEY;
+
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is missing from server environment");
+  }
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    let response;
 
     try {
-         const response = await fetch(`${Gemini_URL}?key=${process.env.GEMINI_API_KEY}`,{
-        method:"POST",
+      response = await fetch(`${Gemini_URL}?key=${apiKey}`, {
+        method: "POST",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
           contents: [
             {
-              parts: [
-                {
-                  text: prompt
-                }
-              ]
-            }
-          ]
-        })
+              parts: [{ text: prompt }],
+            },
+          ],
+          generationConfig: {
+            responseMimeType: "application/json",
+          },
+        }),
+      });
+    } catch (error) {
+      // Retry network errors
+      if (attempt < maxRetries) {
+        console.error(
+          `Gemini network error. Retry ${attempt + 1}/${maxRetries}`
+        );
+        await sleep(1000 * 2 ** attempt);
+        continue;
+      }
 
-    })
-
-    if (!response.ok) {
-      const err = await response.text();
-      throw new Error(err);
+      console.error("Gemini network failure:", error.message);
+      throw new Error("Gemini service is unreachable");
     }
 
-    const data = await response.json()
+    if (!response.ok) {
+      const errorText = await response.text();
+      const retryable = [429, 500, 502, 503, 504].includes(
+        response.status
+      );
 
-    const text =
-      data.candidates?.[0]?.content?.parts?.[0]?.text;
+      console.error(`Gemini API returned ${response.status}`);
+
+      if (retryable && attempt < maxRetries) {
+        await sleep(1000 * 2 ** attempt);
+        continue;
+      }
+
+      const error = new Error(
+        `Gemini API error ${response.status}: ${errorText}`
+      );
+      error.status = response.status;
+      throw error;
+    }
+
+    let data;
+
+    try {
+      data = await response.json();
+    } catch {
+      throw new Error("Gemini returned invalid JSON response");
+    }
+
+    const text = data.candidates?.[0]?.content?.parts
+      ?.map((part) => part.text || "")
+      .join("")
+      .trim();
 
     if (!text) {
-      throw new Error("No text returned from Gemini");
+      console.error(
+        "Gemini returned no text:",
+        data.promptFeedback || "No candidate text"
+      );
+      throw new Error("Gemini returned no text");
     }
 
     const cleanText = text
-      .replace(/```json/g, "")
-      .replace(/```/g, "")
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/i, "")
       .trim();
 
+    try {
       return JSON.parse(cleanText);
-
-
-
-    } catch (error) {
-        console.error("Gemini Fetch Error:", error.message);
-    throw new Error("Gemini API fetch failed");
+    } catch {
+      console.error("Gemini returned invalid JSON content");
+      throw new Error("Gemini response was not valid JSON");
     }
-   
-}
+  }
+
+  throw new Error("Gemini API failed after retries");
+};
