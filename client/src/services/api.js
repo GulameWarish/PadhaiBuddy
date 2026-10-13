@@ -1,11 +1,9 @@
 import axios from "axios";
 import { setUserData } from "../redux/userSlice";
 
-// Axios instance using env var (set REACT_APP_API_URL in Netlify)
-// Falls back to http://localhost:8000 for local development
 const api = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || "http://localhost:8000",
-  withCredentials: true, // required if backend uses cookies/sessions
+  baseURL: import.meta.env.VITE_API_URL || "http://localhost:8000",
+  withCredentials: true,
 });
 
 export const getCurrentUser = async (dispatch) => {
@@ -13,17 +11,17 @@ export const getCurrentUser = async (dispatch) => {
     const result = await api.get("/api/user/currentuser");
     dispatch(setUserData(result.data));
   } catch (error) {
-    console.log(error);
+    console.error("Get current user failed:", error);
   }
 };
 
 export const generateNotes = async (payload) => {
   try {
     const result = await api.post("/api/notes/generate-notes", payload);
-    console.log(result.data);
     return result.data;
   } catch (error) {
-    console.log(error);
+    console.error("Generate notes failed:", error);
+    throw error;
   }
 };
 
@@ -32,7 +30,7 @@ export const downloadPdf = async (result) => {
     const response = await api.post(
       "/api/pdf/generate-pdf",
       { result },
-      { responseType: "blob" } // withCredentials already set on api instance
+      { responseType: "blob" }
     );
 
     const blob = new Blob([response.data], {
@@ -43,10 +41,12 @@ export const downloadPdf = async (result) => {
     const link = document.createElement("a");
     link.href = url;
     link.download = "ExamNotesAI.pdf";
+    document.body.appendChild(link);
     link.click();
-
+    link.remove();
     window.URL.revokeObjectURL(url);
   } catch (error) {
+    console.error("PDF download failed:", error);
     throw new Error("PDF download failed");
   }
 };
